@@ -1,0 +1,17 @@
+.oauth-container {
+	max-width: 1000px;
+	margin: 0 auto;
+}
+
+pre {
+	white-space: pre-wrap;
+	word-wrap: break-word;
+	font-family: monospace;
+	font-size: 0.8rem;
+	max-height: 200px;
+	overflow: auto;
+}
+
+.slds-path__link {
+	cursor: default;
+}

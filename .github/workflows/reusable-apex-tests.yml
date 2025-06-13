@@ -1,0 +1,167 @@
+name: Reusable Apex Tests Workflow
+on:
+  workflow_call:
+    inputs:
+      auth_url:
+        description: 'Salesforce Dev Hub Auth URL (optional)'
+        type: string
+        required: false
+jobs:
+  run-apex-code-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install sfdx with npm
+        run: |
+            npm i @salesforce/cli --global
+      - name: Scan code
+        run: |
+            sf scanner run --format sarif --target 'force-app/' --category "Design,Best Practices,Performance,Code Style,Error Prone" --outfile 'apexScanResults.sarif'
+      - name: Upload SARIF file
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+            sarif_file: apexScanResults.sarif
+  run-apex-tests:
+    runs-on: ubuntu-latest
+   
+    steps:
+      - uses: actions/checkout@v2
+     
+      - name: Install sfdx with npm
+        run: |
+            npm i @salesforce/cli --global
+
+      - name: Set Auth URL
+        id: set-auth-url
+        run: |
+            if [ -n "${{ inputs.auth_url }}" ]; then
+              echo "Using provided Auth URL"
+              echo "AUTH_URL=${{ inputs.auth_url }}" >> $GITHUB_ENV
+            else
+              echo "Using Auth URL from secrets"
+              echo "AUTH_URL=${{ secrets.DEV_HUB_AUTH_URL }}" >> $GITHUB_ENV
+            fi
+
+      - name: Authenticate Dev Hub
+        run: |
+            echo "${{ env.AUTH_URL }}" > sfdx_auth
+            sf org login sfdx-url -f sfdx_auth -d -a DevHub
+            rm sfdx_auth
+
+      - name: Display Dev Hub Limits
+        run: |
+            sf limits api display -o DevHub
+
+      - name: Set scratch org name with current date
+        id: set-org-name
+        run: |
+            echo "ORG_NAME=ScratchOrg_$(date +'%Y%m%d')" >> $GITHUB_ENV
+            echo "Using scratch org alias: ${{ env.ORG_NAME }}"
+
+
+      - name: Get latest run ID
+        id: get-latest-run
+        continue-on-error: true
+        run: |
+          # Get latest run ID for the workflow regardless of status
+          LATEST_RUN_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/pr-open_sync_reopen.yml/runs?per_page=10" | \
+            jq -r '.workflow_runs[1].id')
+          
+          if [ -z "$LATEST_RUN_ID" ] || [ "$LATEST_RUN_ID" == "null" ]; then
+            echo "No runs found"
+            exit 1
+          fi
+          
+          echo "Found latest run ID: $LATEST_RUN_ID"
+          echo "run_id=$LATEST_RUN_ID" >> $GITHUB_OUTPUT
+      
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: scratch-org-auth-${{ env.ORG_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.get-latest-run.outputs.run_id }}
+
+      - name: Check for scratch org auth file
+        id: check-auth-file
+        run: |
+          if [ -f "scratch_auth.txt" ]; then
+            echo "SCRATCH_AUTH_EXISTS=true" >> $GITHUB_ENV
+            echo "Found existing scratch_auth.txt file"
+          else
+            echo "SCRATCH_AUTH_EXISTS=false" >> $GITHUB_ENV
+            echo "No scratch_auth.txt file found, will create new scratch org"
+          fi
+
+      - name: Update project-scratch-def.json with dynamic org name
+        run: |
+            # Read the current file
+            SCRATCH_DEF=$(cat config/project-scratch-def.json)
+            # Update the orgName field with the dynamic name
+            UPDATED_SCRATCH_DEF=$(echo "$SCRATCH_DEF" | jq --arg orgName "${{ env.ORG_NAME }}" '.orgName = $orgName')
+            # Write back to the file
+            echo "$UPDATED_SCRATCH_DEF" > config/project-scratch-def.json
+            # Display the updated file
+            echo "Updated project-scratch-def.json:"
+            cat config/project-scratch-def.json
+
+      - name: Try to authenticate with existing scratch org
+        id: auth-existing-org
+        continue-on-error: true
+        if: env.SCRATCH_AUTH_EXISTS == 'true'
+        run: |
+          echo "Attempting to authenticate with existing scratch org..."
+          sf org login sfdx-url -f scratch_auth.txt -a ${{ env.ORG_NAME }}
+          echo "AUTH_SUCCESS=true" >> $GITHUB_ENV
+
+      - name: Try to deploy to existing scratch org
+        id: try-deploy
+        if: env.SCRATCH_AUTH_EXISTS == 'true' && steps.auth-existing-org.outcome == 'success'
+        continue-on-error: true
+        run: |
+            echo "Attempting to deploy to existing scratch org with alias ${{ env.ORG_NAME }}..."
+            sf project deploy start --target-org ${{ env.ORG_NAME }} --ignore-conflicts
+            if [ $? -eq 0 ]; then
+              echo "DEPLOY_SUCCESS=true" >> $GITHUB_ENV
+            else
+              echo "DEPLOY_SUCCESS=false" >> $GITHUB_ENV
+            fi
+
+      - name: Create new scratch org if needed
+        id: create-scratch-org
+        if: env.SCRATCH_AUTH_EXISTS == 'false' || steps.auth-existing-org.outcome == 'failure' || env.DEPLOY_SUCCESS == 'false'
+        run: |
+            echo "Creating new scratch org..."
+            sf org create scratch --duration-days 1 --alias ${{ env.ORG_NAME }} --definition-file config/project-scratch-def.json
+            echo "Created new scratch org with alias ${{ env.ORG_NAME }}"
+
+            echo "Installing Nebula logging"
+            sf package install --wait 20 --security-type AdminsOnly --package 04t5Y0000015pGKQAY --no-prompt --target-org ${{ env.ORG_NAME }}
+           
+            echo "Deploying to new scratch org..."
+            sf project deploy start --target-org ${{ env.ORG_NAME }}
+            
+            # Save the auth URL for future runs
+            sf org display --target-org ${{ env.ORG_NAME }} --verbose --json | jq -r '.result.sfdxAuthUrl' > scratch_auth.txt
+
+      # Generate and display scratch org password
+      - name: Generate and display scratch org password
+        run: |
+            echo "Generating password for scratch org..."
+            sf org generate password --target-org ${{ env.ORG_NAME }}
+
+      - name: Upload scratch org auth as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scratch-org-auth-${{ env.ORG_NAME }}
+          path: scratch_auth.txt
+          retention-days: 1
+
+      - name: Run Apex Unit Tests
+        run: |
+            sf apex test run -r human -c --wait 10 --target-org ${{ env.ORG_NAME }}

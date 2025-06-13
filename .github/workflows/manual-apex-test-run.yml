@@ -1,0 +1,19 @@
+name: Apex Unit Tests Manually
+
+on:
+    workflow_dispatch:
+        inputs:
+            auth_url:
+                description: 'Salesforce Dev Hub Auth URL (optional)'
+                required: false
+                type: string
+
+jobs:
+    run-tests:
+        permissions:
+          contents: read
+          pull-requests: write
+        uses: ./.github/workflows/reusable-apex-tests.yml
+        with:
+            auth_url: ${{ inputs.auth_url }}
+        secrets: inherit

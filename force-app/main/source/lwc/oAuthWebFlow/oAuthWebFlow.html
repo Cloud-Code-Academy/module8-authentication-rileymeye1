@@ -1,0 +1,214 @@
+<template>
+	<div class="oauth-container">
+		<div class="slds-box slds-theme_default">
+			<lightning-tabset
+				variant="scoped"
+				onactive={handleTabChange}
+				active-tab-value={activeTab}
+			>
+				<lightning-tab label="Authorize Client" value="step1" class={authorizeClientClass}>
+					<!-- Step 1: Authorize Client -->
+					<div class="slds-m-top_medium">
+						<div class="slds-grid slds-gutters">
+							<div class="slds-col">
+								<lightning-input
+									type="checkbox"
+									label="Use PKCE (Proof Key for Code Exchange)"
+									checked={usePkce}
+									onchange={handleUsePkceChange}
+									class="slds-m-bottom_small"
+								></lightning-input>
+							</div>
+						</div>
+
+						<p class="slds-m-top_small">
+							Click the button below to authorize the client application.
+						</p>
+						<div class="slds-m-top_medium">
+							<lightning-button
+								label="Authorize"
+								variant="brand"
+								onclick={handleAuthorize}
+							></lightning-button>
+						</div>
+
+						<!-- Navigation Buttons -->
+						<div class="slds-grid slds-grid_align-spread slds-m-top_medium">
+							<div></div>
+							<!-- Empty div for spacing -->
+							<lightning-button
+								label="Next"
+								variant="neutral"
+								onclick={handleNextTab}
+								data-current-tab="step1"
+								class="slds-m-left_x-small"
+							></lightning-button>
+						</div>
+					</div>
+				</lightning-tab>
+
+				<lightning-tab
+					label="Exchange Authorization Code"
+					value="step2"
+					class={exchangeAuthCodeClass}
+				>
+					<!-- Step 2: Exchange Authorization Code -->
+					<div class="slds-m-top_medium">
+						<p class="slds-m-top_small">
+							Enter the authorization code received from the OAuth provider.
+						</p>
+						<div class="slds-m-top_medium">
+							<lightning-input
+								label="Authorization Code"
+								value={authCode}
+								onchange={handleAuthCodeChange}
+							></lightning-input>
+
+							<template if:true={usePkce}>
+								<div class="slds-m-top_small">
+									<lightning-input
+										label="Code Verifier"
+										value={codeVerifier}
+										readonly
+									></lightning-input>
+								</div>
+								<div class="slds-m-top_small">
+									<lightning-input
+										label="Code Challenge"
+										value={pkceData.codeChallenge}
+										readonly
+									></lightning-input>
+								</div>
+							</template>
+
+							<div class="slds-m-top_small">
+								<lightning-button
+									label="Exchange Code"
+									variant="brand"
+									onclick={handleExchangeCode}
+								></lightning-button>
+							</div>
+						</div>
+						<!-- Navigation Buttons -->
+						<div class="slds-grid slds-grid_align-spread slds-m-top_medium">
+							<lightning-button
+								label="Previous"
+								variant="neutral"
+								onclick={handlePreviousTab}
+								data-current-tab="step2"
+							></lightning-button>
+							<lightning-button
+								label="Next"
+								variant="neutral"
+								onclick={handleNextTab}
+								data-current-tab="step2"
+								class="slds-m-left_x-small"
+							></lightning-button>
+						</div>
+					</div>
+				</lightning-tab>
+
+				<lightning-tab label="Fetch Identity" value="step3" class={fetchIdentityClass}>
+					<!-- Step 3: Fetch Identity -->
+					<div class="slds-m-top_medium">
+						<p class="slds-m-top_small">
+							Click the button below to fetch the user identity.
+						</p>
+						<div class="slds-m-top_medium">
+							<lightning-button
+								label="Fetch Identity"
+								variant="brand"
+								onclick={handleFetchIdentity}
+							></lightning-button>
+						</div>
+
+						<div if:true={showAccessToken} class="slds-m-top_medium">
+							<div class="slds-form-element">
+								<label class="slds-form-element__label">Access Token</label>
+								<div class="slds-form-element__control">
+									<div class="slds-form-element__static">{accessToken}</div>
+								</div>
+							</div>
+						</div>
+
+						<!-- Navigation Buttons -->
+						<div class="slds-grid slds-grid_align-spread slds-m-top_medium">
+							<lightning-button
+								label="Previous"
+								variant="neutral"
+								onclick={handlePreviousTab}
+								data-current-tab="step3"
+							></lightning-button>
+							<lightning-button
+								label="Next"
+								variant="neutral"
+								onclick={handleNextTab}
+								data-current-tab="step3"
+								class="slds-m-left_x-small"
+							></lightning-button>
+						</div>
+					</div>
+				</lightning-tab>
+
+				<lightning-tab label="Create Account" value="step4" class={successClass}>
+					<!-- Step 4: Create Account -->
+					<div class="slds-m-top_medium">
+						<p class="slds-m-top_small">Click the button below to create an account.</p>
+
+						<div if:true={showIdentity} class="slds-m-top_medium">
+							<div class="slds-form-element">
+								<label class="slds-form-element__label">Identity</label>
+								<div class="slds-form-element__control">
+									<pre class="slds-form-element__static">{formattedIdentity}</pre>
+								</div>
+							</div>
+						</div>
+
+						<div class="slds-m-top_medium">
+							<lightning-button
+								label="Create Account"
+								variant="brand"
+								onclick={handleCreateAccount}
+							></lightning-button>
+						</div>
+
+						<div if:true={accountCreated} class="slds-m-top_medium">
+							<div class="slds-form-element">
+								<div class="slds-form-element__control">
+									<div class="slds-form-element__static">
+										Account created with ID: {accountId}
+									</div>
+								</div>
+							</div>
+						</div>
+
+						<!-- Navigation Buttons -->
+						<div class="slds-grid slds-grid_align-spread slds-m-top_medium">
+							<lightning-button
+								label="Previous"
+								variant="neutral"
+								onclick={handlePreviousTab}
+								data-current-tab="step4"
+							></lightning-button>
+							<div></div>
+							<!-- Empty div for spacing -->
+						</div>
+					</div>
+				</lightning-tab>
+			</lightning-tabset>
+
+			<!-- Response Display -->
+			<div if:true={hasResponse} class="slds-m-top_large">
+				<h3 class="slds-text-heading_small">Request</h3>
+				<div class="slds-box slds-theme_shade">
+					<pre>{request}</pre>
+				</div>
+
+				<h3 class="slds-text-heading_small slds-m-top_medium">Response</h3>
+				<div class="slds-box slds-theme_shade">
+					<pre>{response}</pre>
+				</div>
+			</div>
+		</div>
+	</div>
+</template>
